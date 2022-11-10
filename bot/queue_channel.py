@@ -18,6 +18,15 @@ from core.client import FakeMember
 import bot
 from bot.stats.rating import FlatRating, Glicko2Rating, TrueSkillRating
 
+hardcoded_expire_times = {
+  935773812065181750 : ["general_test", 40*60 ],
+  738113190507839598 : ["Playerbase_2v2", 40*60 ],
+  597415520337133571 : ["Playerbase_4v4", 40*60 ],
+  597428419617095680 : ["Playerbase_5v5", 40*60 ],
+  1035999895968030800 : ["Playerbase_8v8-today", 10*60*60 ],
+  502231263827197952 : ["Playerbase_8v8", 60*60 ],
+}
+
 MAX_EXPIRE_TIME = 12*60*60
 MAX_PROMOTION_DELAY = 12*60*60
 
@@ -600,10 +609,18 @@ class QueueChannel:
 	async def update_rating_roles(self, *members):
 		asyncio.create_task(self._update_rating_roles(*members))
 
-	async def update_expire(self, member):
+	async def update_expire(self, member, channel_id):
 		""" update expire timer on !add command """
 		personal_expire = await db.select_one(['expire'], 'players', where={'user_id': member.id})
 		personal_expire = personal_expire.get('expire') if personal_expire else None
+		for c in hardcoded_expire_times:
+			if channel_id == c:
+				if personal_expire not in [0, None] and personal_expire > hardcoded_expire_times[c][1]:
+					personal_expire = hardcoded_expire_times[c][1]
+					await self.success(self.gt("Pubobot Set your expire time to {time}.").format(
+						time=seconds_to_str(hardcoded_expire_times[c][1])
+					))
+
 		if personal_expire not in [0, None]:
 			bot.expire.set(self, member, personal_expire)
 		elif self.cfg.expire_time and personal_expire is None:
@@ -778,7 +795,7 @@ class QueueChannel:
 			)))
 
 		if bot.Qr.Success in qr.values():
-			await self.update_expire(message.author)
+			await self.update_expire(message.author, message.channel.id)
 			await self.update_topic(phrase=f"{message.author.mention}, {phrase}" if phrase else None)
 
 	async def _remove_member(self, message, args=None):
@@ -1141,6 +1158,14 @@ class QueueChannel:
 					time=seconds_to_str(MAX_EXPIRE_TIME)
 				)))
 
+			for c in hardcoded_expire_times:
+				if message.channel.id == c:
+					if secs > hardcoded_expire_times[c][1]:
+						raise bot.Exc.ValueError(self.gt("Expire time must be less than {time}. Expire time set to {time}".format(
+							time=seconds_to_str(hardcoded_expire_times[c][1])
+						)))
+
+
 			bot.expire.set(self, message.author, secs)
 			await self.success(self.gt("Set your expire time to {duration}.").format(
 				duration=seconds_to_str(secs)
@@ -1459,7 +1484,7 @@ class QueueChannel:
 
 		resp = await queue.add_member(member)
 		if resp == bot.Qr.Success:
-			await self.update_expire(member)
+			await self.update_expire(member, message.channel.id)
 			await self.update_topic()
 
 	async def subscribe(self, member, args, unsub=False):
