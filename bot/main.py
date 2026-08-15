@@ -91,54 +91,65 @@ def update_rating_system(qc_cfg):
 	queue_channels[qc_cfg.p_key].update_rating_system()
 
 
+STATE_FILE = "/data/saved_state.json"
+
+
 def save_state():
-	log.info("Saving state...")
-	queues = []
-	for qc in queue_channels.values():
-		for q in qc.queues:
-			if q.length > 0:
-				queues.append(q.serialize())
+    log.info("Saving state...")
 
-	matches = []
-	for match in active_matches:
-		matches.append(match.serialize())
+    queues = []
+    for qc in queue_channels.values():
+        for q in qc.queues:
+            if q.length > 0:
+                queues.append(q.serialize())
 
-	f = open("saved_state.json", 'w')
-	f.write(json.dumps(dict(queues=queues, matches=matches, allow_offline=bot.allow_offline, expire=bot.expire.serialize())))
-	f.close()
+    matches = []
+    for match in active_matches:
+        matches.append(match.serialize())
+
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(
+            dict(
+                queues=queues,
+                matches=matches,
+                allow_offline=bot.allow_offline,
+                expire=bot.expire.serialize()
+            ),
+            f
+        )
 
 
 async def load_state():
-	try:
-		with open("saved_state.json", "r") as f:
-			data = json.loads(f.read())
-	except IOError:
-		return
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except IOError:
+        return
 
-	log.info("Loading state...")
+    log.info("Loading state...")
 
-	bot.allow_offline = list(data['allow_offline'])
+    bot.allow_offline = list(data["allow_offline"])
 
-	for qd in data['queues']:
-		if qc := queue_channels.get(qd['channel_id']):
-			if q := get(qc.queues, id=qd['queue_id']):
-				await q.from_json(qd)
-			else:
-				log.error(f"Queue with id {qd['queue_id']} not found.")
-		else:
-			log.error(f"Queue channel with id {qd['channel_id']} not found.")
+    for qd in data["queues"]:
+        if qc := queue_channels.get(qd["channel_id"]):
+            if q := get(qc.queues, id=qd["queue_id"]):
+                await q.from_json(qd)
+            else:
+                log.error(f"Queue with id {qd['queue_id']} not found.")
+        else:
+            log.error(f"Queue channel with id {qd['channel_id']} not found.")
 
-	for md in data['matches']:
-		if qc := queue_channels.get(md['channel_id']):
-			if q := get(qc.queues, id=md['queue_id']):
-				await bot.Match.from_json(q, qc, md)
-			else:
-				log.error(f"Queue with id {md['queue_id']} not found.")
-		else:
-			log.error(f"Queue channel with id {md['channel_id']} not found.")
+    for md in data["matches"]:
+        if qc := queue_channels.get(md["channel_id"]):
+            if q := get(qc.queues, id=md["queue_id"]):
+                await bot.Match.from_json(q, qc, md)
+            else:
+                log.error(f"Queue with id {md['queue_id']} not found.")
+        else:
+            log.error(f"Queue channel with id {md['channel_id']} not found.")
 
-	if 'expire' in data.keys():
-		await bot.expire.load_json(data['expire'])
+    if "expire" in data:
+        await bot.expire.load_json(data["expire"])
 
 
 async def remove_players(*users, reason=None):
