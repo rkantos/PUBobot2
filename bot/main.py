@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DEBUG_CHANNEL_ID = os.environ["DEBUG_CHANNEL_ID"]
+DEBUG_CHANNEL_ID = int(os.environ["DEBUG_CHANNEL_ID"])
 API_KEY = os.environ["API_KEY"]
 
 from expire_times import hardcoded_expire_times

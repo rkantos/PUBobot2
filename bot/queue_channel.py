@@ -33,7 +33,6 @@ MAX_PROMOTION_DELAY = 12*60*60
 
 class QueueChannel:
 
-	DEBUG_CHANNEL_ID = DEBUG_CHANNEL_ID
 
 	rating_names = {
 		'flat': FlatRating,
