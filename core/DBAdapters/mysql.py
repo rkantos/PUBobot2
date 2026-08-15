@@ -2,8 +2,14 @@
 import aiomysql
 from pymysql import err as mysqlErr
 from .common import *
+#import pymysql
+import ssl
 
 from core.console import log
+
+import logging
+# Enable debug logging for aiomysql
+#logging.basicConfig(level=logging.DEBUG)
 
 
 class Types:
@@ -25,15 +31,14 @@ table_blank = dict(tname=None, columns=[], primary_keys=[], foreign_keys=[])
 column_blank = dict(cname=None, ctype=Types.str, notnull=False, unique=False, autoincrement=False, default=None)
 fkey_blank = dict(cname=None, refTable=None, refColumn=None, on_delete=None, on_update=None)
 
-
 class Adapter:
 	types = Types
 	errors = Errors
 
-	def __init__(self, db_address, loop):
+	def __init__(self, db_address, loop, db_capath=None):
 		self.dbAddress = db_address
 		self.loop = loop
-		try: 
+		try:
 			self.dbUser, db_address = db_address.split(':', 1)
 			self.dbPassword, db_address = db_address.split('@', 1)
 			self.dbHost, self.dbName = db_address.split('/', 1)
@@ -41,21 +46,57 @@ class Adapter:
 				self.dbHost, self.dbPort = self.dbHost.split(':')
 			else:
 				self.dbPort = '3306'
+				#self.dbPort = '11398'
+			self.dbPort = int(self.dbPort)
+			print(self.dbPort)
+			if db_capath:
+				self.dbCapath = db_capath
+				print (self.dbCapath)
 		except Exception:
-			raise(ValueError('Bad database address string: ' + self.dbAddress))
+			raise(ValueError('Bad database address string: ' + self.dbAddres))
 
+		self.print_connection_details()
 		try:
+			# SSL configuration for MySQL connection
+#			ssl_args = {
+#			    'ssl': {
+#			        'sslmode': 'REQUIRED',
+#			        'ca': '/home/csgo/PUBobot2-main/PUBobot2/aiven-ca.pem'  # Replace '/path/to/ca-cert.pem' with the actual path to your CA cert file
+#			    }
+#			}
+			
+			context = ssl.create_default_context(cafile=self.dbCapath)
+#			context = ssl.create_default_context(cafile='/home/csgo/PUBobot2-main/PUBobot2/aiven-ca.pem')
 			self.pool = self.loop.run_until_complete(aiomysql.create_pool(
 				host=self.dbHost,
+				port=self.dbPort,
 				user=self.dbUser,
 				password=self.dbPassword,
 				db=self.dbName,
 				charset='utf8mb4',
 				autocommit=True,
-				cursorclass=aiomysql.cursors.DictCursor))
+				cursorclass=aiomysql.cursors.DictCursor,
+				ssl=context,
+				connect_timeout=2
+				))
 
 		except mysqlErr.Error as e:
 			self.wrap_exc(e)
+
+	def print_connection_details(self):
+		print(f"Attempting to connect to MySQL Database:")
+		print(f"Host: {self.dbHost}")
+		print(f"Port: {self.dbPort}")
+		print(f"User: {self.dbUser}")
+		#print(f"Password: {self.dbPassword}")
+		print(f"Database: {self.dbName}")
+		print("Charset: utf8mb4")
+		print("Autocommit: True")
+		print("Cursor class: aiomysql.cursors.DictCursor")
+		print("Connect Timeout: 10 seconds")
+		# You can also print SSL status if you intend to use it
+		# print("SSL: Enabled" if 'ssl' in self.pool else "SSL: Not enabled")
+			# Print connection details
 
 	async def execute(self, *args):
 		async with self.pool.acquire() as conn:

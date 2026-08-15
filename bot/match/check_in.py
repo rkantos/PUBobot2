@@ -42,9 +42,20 @@ class CheckIn:
 				await self.finish()
 
 	async def start(self):
-		text = f"!spawn message {self.m.id}"
-		self.message = await self.m.send(text)
-
+		# text = f"!spawn message {self.m.id}"
+		# self.message = await self.m.send(text)
+		
+		not_ready = list(filter(lambda m: m not in self.ready_players, self.m.players))
+		self.message = await self.m.send(content=None, embed=self.m.embeds.check_in(not_ready))
+		# pin the message
+		try:
+			await self.message.pin()
+		except Exception as e:
+			print(f"Could not pin message: {e}")
+		
+		# Register reaction handler immediately (before adding reactions)
+		bot.waiting_reactions[self.message.id] = self.process_reaction		
+		
 		emojis = [self.READY_EMOJI, '🔸', self.NOT_READY_EMOJI] if self.allow_discard else [self.READY_EMOJI]
 		emojis += [self.INT_EMOJIS[n] for n in range(len(self.maps))]
 		try:
@@ -52,7 +63,8 @@ class CheckIn:
 				await self.message.add_reaction(emoji)
 		except DiscordException:
 			pass
-		bot.waiting_reactions[self.message.id] = self.process_reaction
+		#moved up
+		#bot.waiting_reactions[self.message.id] = self.process_reaction
 		await self.refresh()
 
 	async def refresh(self):

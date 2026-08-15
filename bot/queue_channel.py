@@ -4,6 +4,7 @@ import json
 import time
 import asyncio
 import traceback
+import discord
 from random import randint, choice
 from discord import Embed, Colour, Forbidden
 
@@ -13,10 +14,18 @@ from core.cfg_factory import CfgFactory, Variables, VariableTable
 from core.locales import locales
 from core.utils import error_embed, ok_embed, find, get, join_and, seconds_to_str, parse_duration, get_nick, discord_table
 from core.database import db
-from core.client import FakeMember
+from core.client import FakeMember, dc
 
 import bot
 from bot.stats.rating import FlatRating, Glicko2Rating, TrueSkillRating
+
+from bot.main import DEBUG_CHANNEL_ID
+from pprint import pprint
+
+from expire_times import expire_times as hardcoded_expire_times
+
+no_players_msg = False
+queued_players_msg = False
 
 MAX_EXPIRE_TIME = 12*60*60
 MAX_PROMOTION_DELAY = 12*60*60
@@ -98,6 +107,13 @@ class QueueChannel:
 			Variables.DurationVar(
 				"expire_time",
 				display="Auto remove on timer after last !add command",
+				section="Auto-remove",
+				verify=lambda x: 0 < x <= MAX_EXPIRE_TIME,
+				verify_message=f"Expire time must be less than {seconds_to_str(MAX_EXPIRE_TIME)}"
+			),
+			Variables.DurationVar(
+				"expire_time_max",
+				display="Maximum Auto remove on timer after last !add command",
 				section="Auto-remove",
 				verify=lambda x: 0 < x <= MAX_EXPIRE_TIME,
 				verify_message=f"Expire time must be less than {seconds_to_str(MAX_EXPIRE_TIME)}"
@@ -378,6 +394,8 @@ class QueueChannel:
 			default_expire=self._default_expire,
 			ao=self._allow_offline,
 			allow_offline=self._allow_offline,
+			do=self._disallow_offline,
+			disallow_offline=self._disallow_offline,
 			matches=self._matches,
 			promote=self._promote,
 			rating_set=self._rating_set,
@@ -447,12 +465,35 @@ class QueueChannel:
 		if self.id == self.rating.channel_id and (self.cfg.rating_decay or self.cfg.rating_deviation_decay):
 			await self.rating.apply_decay(self.cfg.rating_decay or 0, self.cfg.rating_deviation_decay or 0, self._ranks_table)
 
+	async def check_role(self, role_id: int, member: discord.Member = None):
+		role = self.channel.guild.get_role(role_id)
+
+#		member = member or ctx.author 
+		if role is None:
+			#await self.channel.send(f"Role with ID {role_id} not found.")
+			return
+
+		if role in member.roles:
+#			await self.channel.send(f'{member.display_name} has the role {role.name}.')
+#			print(f'{member.display_name} has the role {role.name}.')
+			return True
+		else:
+#			await self.channel.send(f'{member.display_name} does not have the role {role.name}.')
+#			print(f'{member.display_name} does not have the role {role.name}.')
+			return False
+
 	def access_level(self, member):
 		if (self.cfg.admin_role in member.roles or
 					member.id == cfg.DC_OWNER_ID or
 					self.channel.permissions_for(member).administrator):
 			return 2
 		elif self.cfg.moderator_role in member.roles:
+			return 1
+		else:
+			return 0
+			
+	def siesta_role(self, member):
+		if (self.cfg.admin_role in member.roles):
 			return 1
 		else:
 			return 0
@@ -482,8 +523,10 @@ class QueueChannel:
 		self.queues.append(q_obj)
 		return q_obj
 
-	async def update_topic(self, force_announce=False, phrase=None):
+	async def update_topic(self, force_announce=False, phrase=None, message=None):
+#	async def update_topic(self, force_announce=False, phrase=None, ):
 		populated = [q for q in self.queues if len(q.queue)]
+		global no_players_msg
 		if not len(populated):
 			new_topic = f"> {self.gt('no players')}"
 		elif len(populated) < 5:
@@ -494,19 +537,71 @@ class QueueChannel:
 			self.topic = new_topic
 			if phrase:
 				await self.channel.send(phrase + "\n" + self.topic)
+#			else:
+#				await self.channel.send(self.topic)
+			if message:
+				await self.channel.send(self.topic + " | " + f"{message.author.mention}" + ": " + message.content)
 			else:
 				await self.channel.send(self.topic)
+		# New functionality - send mentions of users in the queue
+		for q in populated:
+			# Create a list of mentions for all users in the queue
+			user_mentions = [f"<@{user.id}>" for user in q.queue]  # Assuming q.queue contains user objects
+
+			# Join the mentions into a string
+			mentions_str = ", ".join(user_mentions) if user_mentions else "No players to mention"
+
+			# Send a message with user mentions
+			if user_mentions:
+				debugchannel = dc.get_channel(DEBUG_CHANNEL_ID)
+				await debugchannel.send(f"> **{q.name}** ({q.status}) | {mentions_str}")
+
+
+#				await message.delete()
+
+#				await self.channel.send(self.topic)
+#		if hasattr(self, "last_message_id"):
+#			try:
+#				last_message = await self.channel.fetch_message(self.last_message_id)
+#				await last_message.delete()
+#			except discord.NotFound:
+#				pass
+#		if phrase:
+#			message = await self.channel.send(phrase + "\n" + self.topic)
+#		else:
+#			message = await self.channel.send(self.topic)
+#		self.last_message_id = message.id
 
 	async def auto_remove(self, member):
+#		0 means "afk" set as default_expire time
+#		data = await db.select_one(['expire'], 'players', where={'user_id': member.id})
+#		expire = None if not data else data['expire']
 		if member.id in bot.allow_offline:
 			return
+#		if str(member.status) == "idle":
+#			pprint(bot.expire.get(self, member))
+#			if bot.expire.get(self, member) == 0:
+#				await self.remove_members(member, reason="afk", highlight=True)
+#				print("auto_remove 2")
+
+		if self.id != 1045376644422045706: #Don't check 8v8-today
+			if await self.check_role(1186073387408298064, member):
+				if str(member.status) == "idle" and self.cfg.remove_afk:
+					await self.remove_members(member, reason="afk", highlight=True)
+				if str(member.status) == "offline" and self.cfg.remove_offline:
+					await self.remove_members(member, reason="offline")
+					
+		if self.id == 1045376644422045706: # 8v8-today
+		#	print("8v8-today", self.id)
+			if str(member.status) == "idle" and self.cfg.remove_afk:
+				await self.remove_members(member, reason="afk", highlight=True)
 		if bot.expire.get(self, member) is None:
 			if str(member.status) == "idle" and self.cfg.remove_afk:
 				await self.remove_members(member, reason="afk", highlight=True)
 		if str(member.status) == "offline" and self.cfg.remove_offline:
 			await self.remove_members(member, reason="offline")
 
-	async def remove_members(self, *members, reason=None, highlight=False):
+	async def remove_members(self, *members, reason=None, highlight=False, message=None):
 		affected = set()
 		for q in (q for q in self.queues if q.length):
 			affected.update(q.pop_members(*members))
@@ -514,7 +609,7 @@ class QueueChannel:
 		if len(affected):
 			for m in affected:
 				bot.expire.cancel(self, m)
-			await self.update_topic()
+			await self.update_topic(message=message)
 			if reason:
 				if highlight:
 					mention = join_and([m.mention for m in affected])
@@ -548,13 +643,13 @@ class QueueChannel:
 		title = title or self.gt("Error")
 		if reply_to:
 			content = f"<@{reply_to.id}>, " + content
-		await self.channel.send(embed=error_embed(content, title=title))
+		await self.channel.send(embed=error_embed(content, title=title), delete_after=20.0)
 
 	async def success(self, content, title=None, reply_to=None):
 		# title = title or self.gt("Success")
 		if reply_to:
 			content = f"<@{reply_to.id}>, " + content
-		await self.channel.send(embed=ok_embed(content, title=title))
+		await self.channel.send(embed=ok_embed(content, title=title), delete_after=10.0)
 
 	def get_match(self, member):
 		for match in bot.active_matches:
@@ -600,14 +695,65 @@ class QueueChannel:
 	async def update_rating_roles(self, *members):
 		asyncio.create_task(self._update_rating_roles(*members))
 
+#	async def update_expire(self, member, channel_id):
 	async def update_expire(self, member):
 		""" update expire timer on !add command """
-		personal_expire = await db.select_one(['expire'], 'players', where={'user_id': member.id})
-		personal_expire = personal_expire.get('expire') if personal_expire else None
+		personal_expire = personal_expire_default = await db.select_one(['expire'], 'players', where={'user_id': member.id})
+		personal_expire = personal_expire_default = personal_expire.get('expire') if personal_expire else None
+
+
+#		for c in hardcoded_expire_times:
+		for channel_id in bot.queue_channels.keys():
+			if self.id == channel_id:
+#				if personal_expire not in [0, None] and personal_expire > hardcoded_expire_times[c][1]:
+				if personal_expire not in [0, None] and personal_expire > self.cfg.expire_time_max:
+#					personal_expire = hardcoded_expire_times[c][1]
+					personal_expire = self.cfg.expire_time_max
+#					await self.success(self.gt("Your !default_expire time is {personal_time}.").format(personal_time=seconds_to_str(personal_default_expire)),
+#						self.gt("Pubobot Set your expire time to {time}.").format(
+#						time=seconds_to_str(hardcoded_expire_times[c][1])
+#					))
+
+		for c in hardcoded_expire_times:
+			if member.id == c:
+#				if personal_expire > hardcoded_expire_times[c][1] or personal_default_expire > hardcoded_expire_times[c][1]:
+#				if personal_default_expire not in [0, None] and personal_default_expire > hardcoded_expire_times[c][1]:
+#				if personal_expire not in [0, None] and personal_expire > hardcoded_expire_times[c][1] or personal_default_expire not in [0, None] and personal_default_expire > hardcoded_expire_times[c][1]:
+#				if personal_expire is None and self.cfg.expire_time > hardcoded_expire_times[c][1] or personal_default_expire is None and personal_default_expire >= hardcoded_expire_times[c][1]:
+#				if personal_expire_default not in [0, None] and personal_expire_default >= hardcoded_expire_times[c][1] or personal_expire is None and self.cfg.expire_time > hardcoded_expire_times[c][1]:
+				if personal_expire_default not in [0, None] and personal_expire_default >= hardcoded_expire_times[c][1]:
+					personal_expire = hardcoded_expire_times[c][1]
+#					await self.success(self.gt("You can queue for a maximum time of {time}.").format(
+#						time=seconds_to_str(hardcoded_expire_times[c][1])
+#					))
+#				elif personal_expire is None and self.cfg.expire_time > hardcoded_expire_times[c][1]:
+				elif self.cfg.expire_time and personal_expire is None and self.cfg.expire_time > hardcoded_expire_times[c][1]:
+					personal_expire = hardcoded_expire_times[c][1]
+#					await self.success(self.gt("You can only queue for a maximum time of {time}.").format(
+#					time=seconds_to_str(hardcoded_expire_times[c][1])
+#					))
+
+
 		if personal_expire not in [0, None]:
 			bot.expire.set(self, member, personal_expire)
+			if personal_expire_default not in [0, None]:
+				await self.success(self.gt("{name}; You will remain in the queue for {personal_time}.").format(name=f"<@{member.id}>",personal_time=seconds_to_str(personal_expire_default)),
+					self.gt("Your !default_expire time is {time}.").format(
+					time=seconds_to_str(personal_expire)
+				))
+			else:
+				await self.success(self.gt("{name}; You will remain in the queue for {time}.").format(
+					name=f"<@{member.id}>",
+					time=seconds_to_str(personal_expire)
+				))
+
+
 		elif self.cfg.expire_time and personal_expire is None:
 			bot.expire.set(self, member, self.cfg.expire_time)
+			await self.success(self.gt("{name}; You will remain in the queue for {time}.").format(
+				name=f"<@{member.id}>",
+				time=seconds_to_str(self.cfg.expire_time)
+			))
 
 	async def _update_rating_roles(self, *members):
 		table = self._ranks_table
@@ -686,7 +832,10 @@ class QueueChannel:
 			try:
 				await f(message, *args)
 			except bot.Exc.PubobotException as e:
-				await message.channel.send(embed=error_embed(str(e), title=type(e).__name__))
+				debugchannel = dc.get_channel(DEBUG_CHANNEL_ID)
+				await debugchannel.send(embed=error_embed(str(e) + str("\n Discord guild: " + self.channel.guild.name + "\n Channel: " + self.channel.name + "\n Nickname: "
+				+ get_nick(message.author) + "\nMessage: " + message.content + "\n Message URL: " + message.jump_url), title=type(e).__name__))
+				await message.channel.send(embed=error_embed(str(e), title=type(e).__name__), delete_after=30.0)
 			except BaseException as e:
 				await message.channel.send(embed=error_embed(str(e), title="RuntimeError"))
 				log.error(f"Error processing last message. Traceback:\n{traceback.format_exc()}======")
@@ -778,15 +927,31 @@ class QueueChannel:
 			)))
 
 		if bot.Qr.Success in qr.values():
+#			await self.update_expire(message.author, message.channel.id)
 			await self.update_expire(message.author)
-			await self.update_topic(phrase=f"{message.author.mention}, {phrase}" if phrase else None)
+			await self.update_topic(phrase=f"{message.author.mention}, {phrase}" if phrase else None, message=message)
+#			await self.update_topic(phrase=f"{message.author.mention}, {phrase}" if phrase else None)
+#			await asyncio.sleep(2)
+#			await message.delete()
+#		elif str(message.content) == '++' or str(message.content) == '--':
+		if str(message.content) == '++':
+			await message.delete()
+#		add allow offline for everyone by default
+		if not await self.check_role(1186073387408298064, message.author):
+			bot.allow_offline.append(message.author.id)
 
 	async def _remove_member(self, message, args=None):
 		targets = args.lower().split(" ") if args else []
 
+
 		if not len(targets):
-			await self.remove_members(message.author)
-			return
+			await self.remove_members(message.author, message=message)
+			if str(message.content) == '--':
+				await message.delete()
+				return
+#			if str(message.content) == '--':
+#				await message.delete()
+#				return
 
 		t_queues = (q for q in self.queues if any(
 			(t == q.name.lower() or t in (a["alias"].lower() for a in q.cfg.tables.aliases) for t in targets)
@@ -798,7 +963,11 @@ class QueueChannel:
 		if not any((q.is_added(message.author) for q in self.queues)):
 			bot.expire.cancel(self, message.author)
 
-		await self.update_topic()
+		await self.update_topic(message=message)
+#		await asyncio.sleep(2)
+		if str(message.content) == '--':
+			await message.delete()
+
 
 	async def _who(self, message, args=None):
 		targets = args.lower().split(" ") if args else []
@@ -891,12 +1060,32 @@ class QueueChannel:
 		raise bot.Exc.SyntaxError(f"No such queue '{args}'.")
 
 	async def _ready(self, message, args=None):
-		if match := self.get_match(message.author):
+		if args:
+			self._check_perms(message.author, 1)
+			if not args:
+				raise bot.Exc.SyntaxError(f"Usage: {self.cfg.prefix}ready __@user__")
+			elif (member := self.get_member(args)) is None:
+				raise bot.Exc.SyntaxError(f"Usage: {self.cfg.prefix}ready __@user__")
+			elif (match := self.get_match(member)) is None:
+				raise bot.Exc.NotInMatchError(self.gt("Specified user is not in a match."))
+			await match.check_in.set_ready(member, True)
+			return
+		elif match := self.get_match(message.author):
 			await match.check_in.set_ready(message.author, True)
 		else:
 			raise bot.Exc.NotInMatchError(self.gt("You are not in an active match."))
 
 	async def _not_ready(self, message, args=None):
+		if args:
+			self._check_perms(message.author, 1)
+			if not args:
+				raise bot.Exc.SyntaxError(f"Usage: {self.cfg.prefix}not_ready __@user__")
+			elif (member := self.get_member(args)) is None:
+				raise bot.Exc.SyntaxError(f"Usage: {self.cfg.prefix}not_ready __@user__")
+			elif (match := self.get_match(member)) is None:
+				raise bot.Exc.NotInMatchError(self.gt("Specified user is not in a match."))
+			await match.check_in.set_ready(member, False)
+			return
 		if match := self.get_match(message.author):
 			await match.check_in.set_ready(message.author, False)
 		else:
@@ -1128,6 +1317,7 @@ class QueueChannel:
 					duration=seconds_to_str(task.at-int(time.time()))
 				))
 			else:
+				print(bot.expire.get(self, message.author))
 				await self.channel.send(self.gt("You don't have an expire timer set right now."))
 
 		else:
@@ -1140,6 +1330,31 @@ class QueueChannel:
 				raise bot.Exc.ValueError(self.gt("Expire time must be less than {time}.".format(
 					time=seconds_to_str(MAX_EXPIRE_TIME)
 				)))
+
+			for c in hardcoded_expire_times:
+				if message.author.id == c:
+					if secs >= hardcoded_expire_times[c][1]:
+						secs = hardcoded_expire_times[c][1]
+						bot.expire.set(self, message.author, secs)
+						raise bot.Exc.ValueError(self.gt("Expire time must be less than {time}. Expire time set to {time}".format(
+							time=seconds_to_str(hardcoded_expire_times[c][1])
+						)))
+
+# commented section for using hardcoded expire times in main.py instead of DB (not added to DB bootstrap)
+#			for c in hardcoded_expire_times:
+#			for c in bot.queue_channels[message.channel.id]:
+			for channel_id in bot.queue_channels.keys():
+				if message.channel.id == channel_id:
+#					if secs > hardcoded_expire_times[channel_id][1]:
+					if secs > self.cfg.expire_time_max:
+#						secs = hardcoded_expire_times[channel_id][1]
+						secs = self.cfg.expire_time_max
+						bot.expire.set(self, message.author, secs)
+						raise bot.Exc.ValueError(self.gt("Expire time must be less than {time}. Expire time set to {time}".format(
+							time=seconds_to_str(secs)
+						)))
+
+
 
 			bot.expire.set(self, message.author, secs)
 			await self.success(self.gt("Set your expire time to {duration}.").format(
@@ -1185,6 +1400,14 @@ class QueueChannel:
 			await self.success(text)
 
 	async def _allow_offline(self, message, args=None):
+		if message.author.id in bot.allow_offline:
+			bot.allow_offline.remove(message.author.id)
+			await self.success(self.gt("Your offline immunity is **off**."))
+		else:
+			bot.allow_offline.append(message.author.id)
+			await self.success(self.gt("Your offline immunity is **on** until the next match."))
+
+	async def _disallow_offline(self, message, args=None):
 		if message.author.id in bot.allow_offline:
 			bot.allow_offline.remove(message.author.id)
 			await self.success(self.gt("Your offline immunity is **off**."))
@@ -1449,18 +1672,42 @@ class QueueChannel:
 
 	async def _add_player(self, message, args=""):
 		self._check_perms(message.author, 1)
-		args = args.split(" ", maxsplit=1)
-		if len(args) != 2:
-			raise bot.Exc.SyntaxError(f"Usage: {self.cfg.prefix}add_player __queue__ __@user__")
-		elif (queue := find(lambda q: q.name.lower() == args[0].lower(), self.queues)) is None:
-			raise bot.Exc.SyntaxError(f"Usage: {self.cfg.prefix}add_player __queue__ __@user__")
-		elif (member := self.get_member(args[1])) is None:
-			raise bot.Exc.SyntaxError(f"Usage: {self.cfg.prefix}add_player __queue__ __@user__")
+		args = args.strip().split(" ", maxsplit=1)
 
-		resp = await queue.add_member(member)
-		if resp == bot.Qr.Success:
-			await self.update_expire(member)
-			await self.update_topic()
+		if len(args) != 2:
+				raise bot.Exc.SyntaxError(f"Usage: {self.cfg.prefix}add_player __queue__ __@user1__ [@user2 @user3 ...]")
+
+		queue_name, mentions_str = args
+		queue = find(lambda q: q.name.lower() == queue_name.lower(), self.queues)
+		if queue is None:
+				raise bot.Exc.SyntaxError(f"Queue '{queue_name}' not found.")
+
+		# Get list of mentioned members from the message
+		members = message.mentions
+		if not members:
+				raise bot.Exc.SyntaxError(f"You must mention at least one user to add.")
+
+		successful = []
+		failed = []
+
+		for member in members:
+				resp = await queue.add_member(member)
+				if resp == bot.Qr.Success:
+						await self.update_expire(member)
+						successful.append(member.display_name)
+				else:
+						failed.append(member.display_name)
+
+		await self.update_topic()
+
+		response_lines = []
+		if successful:
+				response_lines.append(f"✅ Added: {', '.join(successful)}")
+		if failed:
+				response_lines.append(f"❌ Failed to add: {', '.join(failed)}")
+
+		await message.channel.send("\n".join(response_lines))
+
 
 	async def subscribe(self, member, args, unsub=False):
 		if not args:
@@ -1519,10 +1766,12 @@ class QueueChannel:
 			raise bot.Exc.SyntaxError(f"Usage: {self.cfg.prefix}stats [__@user__]")
 
 		embed = Embed(
-			title=self.gt("Stats for __{target}__").format(target=target),
+			#title=self.gt("Stats for __{target}__").format(target=target),
+			title=str(member.display_name) + " | " + str(member.nick) + " | " + str(member.name),
 			colour=Colour(0x50e3c2),
 			description=self.gt("**Total matches: {count}**").format(count=stats['total'])
 		)
+		print(dir(member))
 		for q in stats['queues']:
 			embed.add_field(name=q['queue_name'], value=str(q['count']), inline=True)
 

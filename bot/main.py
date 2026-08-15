@@ -1,3 +1,6 @@
+
+
+
 # -*- coding: utf-8 -*-
 import traceback
 import json
@@ -15,6 +18,33 @@ waiting_reactions = dict()  # {message.id: function}
 allow_offline = []  # [user_id]
 last_match_id = None
 auto_ready = dict()  # {user.id: timestamp}
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DEBUG_CHANNEL_ID = os.environ["DEBUG_CHANNEL_ID"]
+API_KEY = os.environ["API_KEY"]
+
+from expire_times import hardcoded_expire_times
+
+import socket
+import requests
+
+from bf2_servers import bf2_servers
+
+
+from bot.serverlist_bf2top import BF2TopFetch
+
+# Initialize (loads the server list once at launch)
+bf2top_fetch = BF2TopFetch()
+
+# Get the initial server list
+bf2_servers = bf2top_fetch.get_bf2_servers()
+print("Initial server list at launch:")
+for server in bf2_servers:
+    print(server)
 
 
 async def enable_channel(message):

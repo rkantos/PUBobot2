@@ -1,0 +1,10 @@
+logs/
+*.pyc
+*.pem
+test/
+config.cfg
+saved_state*
+.env
+bf2_servers.py
+*.save
+*.bak

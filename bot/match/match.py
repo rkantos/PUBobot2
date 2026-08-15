@@ -2,9 +2,11 @@
 from time import time
 from itertools import combinations
 import random
-from discord import DiscordException
+from discord import DiscordException, Client, Embed
 
 import bot
+from bot.main import hardcoded_expire_times
+from bot.main import API_KEY
 from core.utils import find, get, iter_to_dict, join_and, get_nick
 from core.client import dc
 
@@ -12,6 +14,21 @@ from .check_in import CheckIn
 from .draft import Draft
 from .embeds import Embeds
 
+
+import socket
+import hashlib
+import re
+import requests
+
+import threading
+from time import sleep
+import asyncio
+
+# global bf2_servers
+from bot.main import bf2_servers
+import json
+import os
+from bot.main import bf2top_fetch
 
 class Match:
 
@@ -160,6 +177,9 @@ class Match:
 		self.lifetime = self.cfg['match_lifetime']
 		self.start_time = int(time())
 		self.state = self.INIT
+
+		self.check_in_timeout = self.cfg['check_in_timeout']
+		self.bf2_servers = bf2_servers
 
 		# Init self sections
 		self.check_in = CheckIn(self, self.cfg['check_in_timeout'])
@@ -363,8 +383,14 @@ class Match:
 
 	async def final_message(self):
 		#  Embed message with teams
+		await self.qc.channel.send("join one of the match servers and ts.", delete_after=10.0)
 		try:
+			bf2top_fetch.load_servers()  # Reload data
+			for server in bf2top_fetch.get_bf2_servers():
+				print(server)
+			self.restart_bf2_servers(self.maps)
 			await self.qc.channel.send(embed=self.embeds.final_message())
+			print(self.maps)
 		except DiscordException:
 			pass
 
@@ -391,3 +417,319 @@ class Match:
 		except DiscordException:
 			pass
 		bot.active_matches.remove(self)
+		
+	def init_web_admin(self, server):
+		host = server["ip"]
+		port = server["port"]
+		password = server["rcon_password"]
+
+		# print(f"connecting to {host}:{port}")
+
+		wa_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		wa_client.settimeout(2)
+		wa_client.connect((host, port))
+		
+		print("connected to rcon", server["ip"])
+
+		def handle_login(data):
+			seed = data.split("### Digest seed: ")[-1].strip()
+			# print(f"authenticating with seed {seed}")
+			wa_client.send(f"login {hashlib.md5(seed.encode() + password.encode()).hexdigest()}\n".encode())
+
+		while True:
+			chunk = wa_client.recv(1024).decode()
+			if not chunk:
+				# raise RuntimeError("Authentication failed - connection closed without successful authentication")
+				break
+			if "### Digest seed: " in chunk:
+				handle_login(chunk)
+			if "Authentication successful" in chunk:
+				# print("authenticated")
+				break
+		# print("disconnected from rcon", server["ip"])
+		return wa_client
+		
+	def get_user_list(self, rcon):
+		user_match = re.compile(r'Id: \s?([0-9]+)\s+-\s+(.*)\s+is remote ip: ([0-9.]+):[0-9]+\s+->\s+CD-key hash: ([a-z0-9]+)')
+		user_list = []
+		rcon.send("exec admin.listPlayers\n".encode())
+		data = rcon.recv(1024).decode()
+		match = user_match.search(data)
+		while match:
+			user_list.append({
+				"id": match.group(1),
+				"name": match.group(2),
+				"ip": match.group(3),
+				"cdkey": match.group(4),
+			})
+			match = user_match.search(data, pos=match.end())
+		return user_list
+
+	def restart_bf2server_rcon(self, server):
+	# BF2cc required to be installed on server
+		user_match = re.compile(r'Id: \s?([0-9]+)\s+-\s+(.*)\s+is remote ip: ([0-9.]+):[0-9]+\s+->\s+CD-key hash: ([a-z0-9]+)')
+		user_list = []
+		rcon = self.init_web_admin(server)
+		rcon.send("exec quit\n".encode())
+		data = rcon.recv(1024).decode()
+		print("_____________restart_bf2server_rcon___________________________",  data)
+		return data
+
+
+	def old2_check_bf2_players(self, server):
+		server = server
+		# global bf2_servers
+		# for server in bf2_servers:
+		rcon = self.init_web_admin(server)
+		global user_list
+		try:
+			user_list = self.get_user_list(rcon)
+			user_list = (user_list, True)
+			rcon.close()
+			return user_list
+		except:
+			user_list = (0, False)
+			rcon.close()
+			return user_list
+#		print(f"List of players for server {server['hostname']}:{server['port']}:")
+#		for user in user_list:
+#			print(f"{user['id']} - {user['name']} - {user['ip']}:{user['cdkey']}")
+
+		#return user_list
+		#rcon.close()
+		
+	def old1_check_bf2_players(self, server):
+		server = server
+		# global bf2_servers
+		# for server in bf2_servers:
+		rcon = self.init_web_admin(server)
+		global user_list
+		user_list = self.get_user_list(rcon)
+#		print(f"List of players for server {server['hostname']}:{server['port']}:")
+#		for user in user_list:
+#			print(f"{user['id']} - {user['name']} - {user['ip']}:{user['cdkey']}")
+
+		return user_list
+		rcon.close()
+		
+	# import json
+	# import re
+	# import os
+
+	def validate_user_list(self, user_list):
+		ip_regex = re.compile(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
+
+		validated_list = []
+		invalid_data = []
+
+		for user_data in user_list:
+			# Additional validation for IP and CD key
+			if ip_regex.match(user_data["ip"]) and len(user_data["cdkey"]) == 32:
+				validated_list.append(user_data)
+			else:
+				print(f"Invalid data detected: {user_data}")
+				print(f"IP: {user_data['ip']}, CD Key Length: {len(user_data['cdkey'])}")
+				invalid_data.append(user_data)
+
+		if invalid_data:
+			self.write_log_file(invalid_data)
+
+		return validated_list
+
+	def write_log_file(self, data):
+		log_file_path = "pubobot_invalid_user_data.log"
+
+		# Create the log file if it doesn't exist
+		if not os.path.exists(log_file_path):
+			with open(log_file_path, "w"):
+				pass
+
+		with open(log_file_path, "a") as log_file:
+			for item in data:
+				log_file.write(json.dumps(item) + "\n")
+
+		print(f"Invalid user data written to log file: {log_file_path}")
+
+		
+	def check_bf2_players(self, server):
+		rcon1 = self.init_web_admin(server)
+		rcon2 = self.init_web_admin(server)
+
+		try:
+			# First RCON check
+			user_list1 = self.get_user_list(rcon1)
+
+			# Second RCON check
+			user_list2 = self.get_user_list(rcon2)
+
+			# Validate IP and CD key for user_list1
+			validated_user_list1 = self.validate_user_list(user_list1)
+			# Validate list not empty
+			if user_list1 and user_list2:
+				# Compare the user_lists
+				if user_list1 == user_list2 and validated_user_list1:
+					print("User lists match, and validation passed.")
+					# Continue with your logic using user_list1 or user_list2
+					return user_list1
+				else:
+					print("User lists do not match or validation failed.")
+					# Handle the case where user lists do not match or validation fails
+					return None
+			else:
+				return user_list1
+
+		except Exception as e:
+			print(f"Error during RCON checks: {e}")
+			# Handle the error as needed
+
+		finally:
+			# Close the RCON connections
+			if 'rcon1' in locals():
+				rcon1.close()
+			if 'rcon2' in locals():
+				rcon2.close()
+
+		return None
+	
+	def restart_bf2_servers(self, map_name):
+		print("_____________bf2.servers___________________________",  [i['hostname'] for i in self.bf2_servers if 'hostname' in i], id(self.bf2_servers))
+#		self.bf2_servers = bf2_servers
+		if not map_name:
+			map_name = "Gulf Of Oman"
+		for server in self.bf2_servers:
+			server['restarted'] = False
+			try:
+				user_list = self.check_bf2_players(server)
+
+				# print(len(user_list), user_list, self.qc.id, dc.get_channel(self.qc.id), dc.get_channel(self.qc.id).name)
+				print("len(user_list):", len(user_list), "user_list:", user_list, "self.qc.id:", self.qc.id, "dc.get_channel(self.qc.id):", dc.get_channel(self.qc.id), "dc.get_channel(self.qc.id).name:", dc.get_channel(self.qc.id).name)
+
+				# print(server['hostname'])
+
+				# if len(user_list[0]) <= 3 and user_list[1] == True:
+				if len(user_list) <= 3:
+					if self.qc.id in [502231263827197952 , 1045376644422045706]:
+						serverName = server['name'] + " 8v8"
+						print(server['hostname'], len(user_list), user_list,  map_name[0], serverName)
+						#url = f"http://{server['hostname']}:{server['jsport']}/restart_vehicles"
+						url = f"https://api.bf2.top/servers/{server['hostname']}/restart" #via bf2.top
+						headers = {'Content-Type': 'application/json', 'X-API-KEY': API_KEY} #bf2.top
+#						payload_dict = {"apiKey": "dIC", "mapName": map_name[0], "serverName": server_name}
+#						payload = json.dumps(payload_dict)
+#						payload = '{"apiKey": "dIC", "mapName": "'+ map_name[0] +'", "serverName": "'+ serverName +'"}' direct to bf2wa
+						payload = '{"mode": "vehicles", "mapName": "'+ map_name[0] +'", "serverName": "'+ serverName +'", "admins": "all", "pubobotMatchId": "'+ str(self.id) +'"}' #via bf2.top
+						response = requests.post(url, headers=headers, data=payload, timeout=10)
+						response.raise_for_status()
+						server['restarted'] = True
+						print(f"----------------------------Restarting server {server['hostname']} {server['restarted']} as it has 2 players or less {response}")
+					# else:
+						# print(f"Not restarting server {server['hostname']} as it has 2 players or more")
+						# print(server['hostname'], len(user_list), user_list,  map_name[0])
+					else:
+						if self.qc.id == 1035999895968030800:
+							# print(f"Restarting server BF2 servers",  map_name[0])
+							try:
+								serverName
+							except:
+								serverName = server['name'] + " 1v1"
+						if self.qc.id == 738113190507839598:
+							serverName = server['name'] # + " 2v2"
+						elif self.qc.id == 597415520337133571:
+							serverName = server['name'] #+ " 4v4"
+						elif self.qc.id == 597428419617095680:
+							serverName = server['name'] #+ " 5v5"
+						else:
+							serverName = server['name'] + " 1v1"
+						# print(f"Restarting server BF2 servers",  map_name[0])
+						# print(server['hostname'], len(user_list), user_list,  map_name[0], serverName)
+						#url = f"http://{server['hostname']}:{server['jsport']}/restart"
+						url = f"https://api.bf2.top/servers/{server['hostname']}/restart" #via bf2.top
+						headers = {'Content-Type': 'application/json', 'X-API-KEY': API-KEY} #via bf2.top
+						#payload_dict = {"apiKey": "dIC", "mapName": map_name[0], "serverName": server_name}
+						#payload = json.dumps(payload_dict)
+						payload = '{"mode": "infantry", "mapName": "'+ map_name[0] +'", "serverName": "'+ serverName +'", "admins": "all", "pubobotMatchId": "'+ str(self.id) +'"}'
+						response = requests.post(url, headers=headers, data=payload, timeout=5)
+						print("Response text:", response.text)
+						response.raise_for_status()
+						server['restarted'] = True
+						print(f"-----------------------------Restarting server: {server['hostname']} with name: {serverName} as it has 2 players or less {response}")
+				else:
+					print(f"Not restarting server {server['hostname']} as it has 2 players or more")
+					print(server['hostname'], len(user_list), user_list,  map_name[0])
+			except (requests.RequestException, requests.HTTPError) as e:
+				# rcon_message = self.restart_bf2server_rcon(server)
+				# if "*** Game will exit! ***" in rcon_message:
+					# server['restarted'] = True
+				# self.changemap_bf2server_rcon(server)
+				print("_____________threading map_name___________________________",  map_name[0], map_name)
+
+				# thread = threading.Thread(target=self.changemap_bf2server_rcon, args=(server,map_name,))
+				# thread = threading.Thread(target=between_callback, args=(server,map_name,))
+				loop = asyncio.get_running_loop()
+				thread = threading.Thread(target=asyncio.run, args=(self.changemap_bf2server_rcon(loop,server,map_name,),))
+				thread.start()
+
+				print("error connecting with rcon to", server, e)
+
+				# Only print response details if available
+				if hasattr(e, "response") and e.response is not None:
+					print(f"Response Status: {e.response.status_code}")
+					print(f"Response Body: {e.response.text}")
+				# print(e)
+				#break
+			except Exception as e:
+				print("An exception occurred:")
+				print(f"Type: {type(e)}")       # Type of the exception
+				print(f"Args: {e.args}")        # Arguments passed to the exception
+				print(f"Message: {str(e)}")     # Exception message
+				# traceback.print_exc()           # Complete traceback
+
+	# async def some_callback(self, args):
+		# await some_function()
+
+	# def between_callback(self, args):
+		# loop = asyncio.new_event_loop()
+		# asyncio.set_event_loop(loop)
+
+		# loop.run_until_complete(changemap_bf2server_rcon(args))
+		# loop.close()
+
+	async def changemap_bf2server_rcon(self, loop, server, match_map_name):
+	# BF2cc required to be installed on server
+		rcon = self.init_web_admin(server)
+		rcon.send("exec quit\n".encode())
+		sleep(15)
+		rcon = self.init_web_admin(server)
+		rcon.send("exec maplist.list\n".encode())
+		data = rcon.recv(1024).decode()
+
+		maps = data.split('\n')[:-1]  # split the response into a list of maps
+
+		map_dict = {}  # create an empty dictionary to store the formatted maps
+
+		for map in maps:
+			map_parts = map.split(': ')
+			map_name = map_parts[1].replace(' gpm_cq','').replace(" 16",'').replace('"','').replace('_',' ').title()
+			map_dict[map_name] = map_parts[0]  # add the map to the dictionary with the formatted name as the key
+
+		# print("_____________restart_bf2server_rcon___________________________",  data, map_dict, match_map_name[0])
+		print("_____________restart_bf2server_rcon___________________________",  map_dict, match_map_name[0])
+		print("_____________restart_bf2server_rcon___________________________",  match_map_name[0], match_map_name)
+		next_level_id = str(map_dict[match_map_name[0]])
+		rcon.send(("exec admin.setNextLevel "+ next_level_id + "\n").encode())
+		sleep(1)
+		rcon.send("exec admin.runNextLevel\n".encode())
+		asyncio.run_coroutine_threadsafe(self.discordmsg_bf2server_rcon(server, match_map_name), loop)
+		return data
+	
+	async def discordmsg_bf2server_rcon(self, server, match_map_name):
+		try:
+			name = server['name'].replace("/bf2pb", "*/*bf2pb")
+			# embed = Embed(description="Also restarted and changed map to **"+ match_map_name[0] +"**: ["+ name +"]"+"(https://joinme.click/g/bf2/"+ server['ip'] +":"+ str(server['bf2port']) +") "+"**IP:** "+"`" + server['hostname'] + "`" + " **PORT:** " + "`" + str(server['bf2port']) + "`")
+			# await self.qc.channel.send(embed=embed)
+			message = "Also restarted and changed map to **"+ match_map_name[0] +"**: ["+ name +"]"+"(https://joinme.click/g/bf2/"+ server['ip'] +":"+ str(server['bf2port']) +") "+"**IP:** "+"`" + server['hostname'] + "`" + " **PORT:** " + "`" + str(server['bf2port']) + "`"
+			message = await self.qc.channel.send(message)
+			await message.edit(suppress=True)
+		except DiscordException:
+			pass
+

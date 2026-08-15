@@ -386,7 +386,6 @@ class PickupQueue:
 		if len(self.queue) < 2:
 			# raise bot.Exc.PubobotException(self.qc.gt("Not enough players to start the queue."))
 			return
-
 		players = list(self.queue)
 		dm_text = self.cfg.start_direct_msg or self.qc.gt("**{queue}** pickup has started @ {channel}!")
 		await self.qc.queue_started(
@@ -414,7 +413,8 @@ class PickupQueue:
 			check_in_discard=self.cfg.check_in_discard, match_lifetime=self.cfg.match_lifetime,
 			start_msg=self.cfg.start_msg, server=self.cfg.server
 		)
-
+		
+				
 	async def fake_ranked_match(self, winners, losers, draw=False):
 		if not self.cfg.ranked:
 			raise bot.Exc.ValueError("Specified queue is not ranked.")

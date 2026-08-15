@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 import bot
 from core.utils import find
+from core.client import dc
 from discord import DiscordException
 
+from bot.main import DEBUG_CHANNEL_ID
 
 class Draft:
 
@@ -16,6 +18,7 @@ class Draft:
 		self.pick_order = [self.pick_steps[i] for i in pick_order] if pick_order else []
 		self.captains_role_id = captains_role_id
 		self.sub_queue = []
+		self.DEBUG_CHANNEL_ID = 1040703302565904394
 
 		if self.m.cfg['pick_teams'] == "draft":
 			self.m.states.append(self.m.DRAFT)
@@ -25,7 +28,9 @@ class Draft:
 
 	async def print(self):
 		try:
-			await self.m.send(embed=self.m.embeds.draft())
+			message = await self.m.send(embed=self.m.embeds.draft())
+			debugchannel = dc.get_channel(DEBUG_CHANNEL_ID)
+			await debugchannel.send(embed=self.m.embeds.draft(debug=True, jump_url=message.jump_url))
 		except DiscordException:
 			pass
 
@@ -112,8 +117,8 @@ class Draft:
 	async def sub_for(self, player1, player2, force=False):
 		if self.m.state not in [self.m.CHECK_IN, self.m.DRAFT, self.m.WAITING_REPORT]:
 			raise bot.Exc.MatchStateError(self.m.gt("The match must be on the check-in, draft or waiting report stage."))
-		elif not force and player1 not in self.sub_queue:
-			raise bot.Exc.PermissionError(self.m.gt("Specified player is not looking for a substitute."))
+#		elif not force and player1 not in self.sub_queue:
+#			raise bot.Exc.PermissionError(self.m.gt("Specified player is not looking for a substitute."))
 
 		team = find(lambda t: player1 in t, self.m.teams)
 		team[team.index(player1)] = player2

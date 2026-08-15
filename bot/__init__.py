@@ -15,3 +15,7 @@ from .exceptions import Exceptions as Exc
 
 from . import events
 from . import utils
+
+
+bot_was_ready = False
+bot_ready = False
