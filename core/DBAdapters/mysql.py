@@ -51,22 +51,21 @@ class Adapter:
 			print(self.dbPort)
 			if db_capath:
 				self.dbCapath = db_capath
-				print (self.dbCapath)
+				#print (self.dbCapath)
 		except Exception:
 			raise(ValueError('Bad database address string: ' + self.dbAddres))
 
 		self.print_connection_details()
 		try:
-			# SSL configuration for MySQL connection
-#			ssl_args = {
-#			    'ssl': {
-#			        'sslmode': 'REQUIRED',
-#			        'ca': '/home/csgo/PUBobot2-main/PUBobot2/aiven-ca.pem'  # Replace '/path/to/ca-cert.pem' with the actual path to your CA cert file
-#			    }
-#			}
-			
-			context = ssl.create_default_context(cafile=self.dbCapath)
-#			context = ssl.create_default_context(cafile='/home/csgo/PUBobot2-main/PUBobot2/aiven-ca.pem')
+			context = ssl.create_default_context()
+			if self.dbCapath:
+				if "-----BEGIN CERTIFICATE-----" in self.dbCapath:
+					# db_capath contains the actual PEM certificate
+					ca_cert = self.dbCapath.replace("\\n", "\n")
+					context.load_verify_locations(cadata=ca_cert)
+				else:
+					# db_capath contains a path to the PEM file
+					context.load_verify_locations(cafile=self.dbCapath)
 			self.pool = self.loop.run_until_complete(aiomysql.create_pool(
 				host=self.dbHost,
 				port=self.dbPort,
