@@ -25,17 +25,43 @@ else:
 
 log = console.log
 
+
 # Gracefully exit on ctrl+c
 original_SIGINT_handler = signal.getsignal(signal.SIGINT)
 
 
 def ctrl_c(sig, frame):
-	bot.save_state()
+	log.info("Ctrl+C received. Saving state...")
+
+	try:
+		bot.save_state()
+		log.info("State saved successfully.")
+	except Exception:
+		log.error("Error saving state:\n" + traceback.format_exc())
+
 	console.terminate()
+
+	# Restore the original SIGINT handler
 	signal.signal(signal.SIGINT, original_SIGINT_handler)
 
 
 signal.signal(signal.SIGINT, ctrl_c)
+
+
+# Gracefully exit on Railway deployment
+def railway_shutdown(sig, frame):
+	log.info("SIGTERM received from Railway. Saving state...")
+
+	try:
+		bot.save_state()
+		log.info("State saved successfully.")
+	except Exception:
+		log.error("Error saving state:\n" + traceback.format_exc())
+
+	console.terminate()
+
+
+signal.signal(signal.SIGTERM, railway_shutdown)
 
 
 # Run commands from user console
@@ -53,7 +79,7 @@ async def run_console():
 		else:
 			log.info(str(x))
 	except Exception as e:
-		log.error("CONSOLE| ERROR: "+str(e))
+		log.error("CONSOLE| ERROR: " + str(e))
 
 
 # Background processes loop
@@ -64,12 +90,21 @@ async def think():
 	# Loop runs roughly every 1 second
 	while console.alive:
 		frame_time = time.time()
+
 		await run_console()
+
 		for task in dc.events['on_think']:
 			try:
 				await task(frame_time)
 			except Exception as e:
-				log.error('Error running background task from {}: {}\n{}'.format(task.__module__, str(e), traceback.format_exc()))
+				log.error(
+					'Error running background task from {}: {}\n{}'.format(
+						task.__module__,
+						str(e),
+						traceback.format_exc()
+					)
+				)
+
 		await asleep(1)
 
 	# Exit signal received
@@ -77,23 +112,31 @@ async def think():
 		try:
 			await task()
 		except Exception as e:
-			log.error('Error running exit task from {}: {}\n{}'.format(task.__module__, str(e), traceback.format_exc()))
-
-	log.info("Waiting for connection to close...")
-	await dc.logout()
+			log.error(
+				'Error running exit task from {}: {}\n{}'.format(
+					task.__module__,
+					str(e),
+					traceback.format_exc()
+				)
+			)
 
 	log.info("Closing db.")
 	await database.db.close()
+
 	if webserver:
 		log.info("Closing web server.")
 		webserver.srv.close()
 		await webserver.srv.wait_closed()
+
 	log.info("Closing discord.")
 	await dc.logout()
+
 	log.info("Closing log.")
 	log.close()
+
 	print("Exit now.")
 	loop.stop()
+
 
 # Login to discord
 loop = asyncio.get_event_loop()
