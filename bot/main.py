@@ -32,9 +32,9 @@ from expire_times import hardcoded_expire_times
 import socket
 import requests
 
-from core.config import cfg, USING_CONFIG_FILE
+from core.config import cfg
 
-if USING_CONFIG_FILE:
+if cfg.USING_CONFIG_FILE:
     from bf2_servers import bf2_servers
 else:
     bf2_servers = {}
