@@ -30,6 +30,7 @@ queued_players_msg = False
 MAX_EXPIRE_TIME = 12*60*60
 MAX_PROMOTION_DELAY = 12*60*60
 
+from bot.main import SIESTA_ROLE
 
 class QueueChannel:
 
@@ -586,12 +587,12 @@ class QueueChannel:
 #				print("auto_remove 2")
 
 		if self.id != 1045376644422045706: #Don't check 8v8-today
-			if await self.check_role(1186073387408298064, member):
+			if await self.check_role(SIESTA_ROLE, member):
 				if str(member.status) == "idle" and self.cfg.remove_afk:
 					await self.remove_members(member, reason="afk", highlight=True)
 				if str(member.status) == "offline" and self.cfg.remove_offline:
 					await self.remove_members(member, reason="offline")
-					
+
 		if self.id == 1045376644422045706: # 8v8-today
 		#	print("8v8-today", self.id)
 			if str(member.status) == "idle" and self.cfg.remove_afk:
@@ -938,7 +939,7 @@ class QueueChannel:
 		if str(message.content) == '++':
 			await message.delete()
 #		add allow offline for everyone by default
-		if not await self.check_role(1186073387408298064, message.author):
+		if not await self.check_role(SIESTA_ROLE, message.author):
 			bot.allow_offline.append(message.author.id)
 
 	async def _remove_member(self, message, args=None):

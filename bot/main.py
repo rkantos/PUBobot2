@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+SIESTA_ROLE = int(os.environ["SIESTA_ROLE"])
 DEBUG_CHANNEL_ID = int(os.environ["DEBUG_CHANNEL_ID"])
 API_KEY = os.environ["API_KEY"]
 
