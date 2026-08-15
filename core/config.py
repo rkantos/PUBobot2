@@ -5,18 +5,19 @@ from pathlib import Path
 from importlib.machinery import SourceFileLoader
 
 
-# Load config.cfg if it exists
 config_path = Path(__file__).resolve().parent.parent / "config.cfg"
 
 if config_path.exists():
     try:
         cfg = SourceFileLoader("cfg", str(config_path)).load_module()
+        USING_CONFIG_FILE = True
     except Exception as e:
         print("Failed to load config.cfg file!")
         raise e
 else:
     print("config.cfg not found, using environment variables.")
     cfg = SimpleNamespace()
+    USING_CONFIG_FILE = False
 
 
 # Environment variables override config.cfg values
@@ -39,15 +40,6 @@ for name in CONFIG_VARS:
 
     if value is not None:
         setattr(cfg, name, value)
-
-
-# Required configuration
-for name in ["DC_BOT_TOKEN", "DB_URI"]:
-    if not getattr(cfg, name, ""):
-        raise RuntimeError(
-            f"Required configuration '{name}' is not set "
-            "in config.cfg or Railway environment variables."
-        )
 
 
 with open(Path(__file__).resolve().parent.parent / ".version", "r") as f:

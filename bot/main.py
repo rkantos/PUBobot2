@@ -32,8 +32,12 @@ from expire_times import hardcoded_expire_times
 import socket
 import requests
 
-from bf2_servers import bf2_servers
+from core.config import cfg, USING_CONFIG_FILE
 
+if USING_CONFIG_FILE:
+    from bf2_servers import bf2_servers
+else:
+    bf2_servers = {}
 
 from bot.serverlist_bf2top import BF2TopFetch
 
