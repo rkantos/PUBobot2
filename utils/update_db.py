@@ -91,7 +91,7 @@ for chan in channels:
 		'promotion_delay': chan['promotion_delay'],
 		'whitelist_role': chan['whitelist_role'],
 		'blacklist_role': chan['blacklist_role'],
-		'expire_time': chan['global_expire']
+		'expire_time': chan['global_expire'],
 		'expire_time_max': chan['expire_time_max']
 	}
 	dict_insert(c2, 'qc_configs', new_channel)

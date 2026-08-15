@@ -8,3 +8,5 @@ saved_state*
 bf2_servers.py
 *.save
 *.bak
+requirements.txt.pipreqs
+requirements.txt.bak

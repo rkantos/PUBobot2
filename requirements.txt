@@ -1,4 +1,11 @@
-discord.py==1.7.3
-aiohttp==3.7.4.post0
-python-dotenv
 aiomysql
+discord.py==1.7.3
+emoji
+glicko2==2.0.0
+prettytable==3.18.0
+PyMySQL==1.1.0
+pyreadline==2.1
+python-dotenv
+Requests
+trueskill==0.4.5
+webui==0.1.7
