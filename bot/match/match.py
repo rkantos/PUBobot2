@@ -32,7 +32,6 @@ from bot.main import bf2top_fetch
 
 class Match:
 
-	API_KEY = API_KEY
 	INIT = 0
 	CHECK_IN = 1
 	DRAFT = 2
@@ -645,7 +644,7 @@ class Match:
 						# print(server['hostname'], len(user_list), user_list,  map_name[0], serverName)
 						#url = f"http://{server['hostname']}:{server['jsport']}/restart"
 						url = f"https://api.bf2.top/servers/{server['hostname']}/restart" #via bf2.top
-						headers = {'Content-Type': 'application/json', 'X-API-KEY': API-KEY} #via bf2.top
+						headers = {'Content-Type': 'application/json', 'X-API-KEY': API_KEY} #via bf2.top
 						#payload_dict = {"apiKey": "dIC", "mapName": map_name[0], "serverName": server_name}
 						#payload = json.dumps(payload_dict)
 						payload = '{"mode": "infantry", "mapName": "'+ map_name[0] +'", "serverName": "'+ serverName +'", "admins": "all", "pubobotMatchId": "'+ str(self.id) +'"}'
