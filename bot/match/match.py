@@ -32,6 +32,7 @@ from bot.main import bf2top_fetch
 
 class Match:
 
+	API_KEY = API_KEY
 	INIT = 0
 	CHECK_IN = 1
 	DRAFT = 2
